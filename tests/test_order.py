@@ -26,6 +26,16 @@ class TestOrder(unittest.TestCase):
         with self.assertRaises(ValueError):
             Order("", Side.BUY, 100, 5)
 
+    
+    def test_negative_price(self):
+        with self.assertRaises(ValueError):
+            Order("ORD004", Side.BUY, -100, 5)
+
+    def test_negative_quantity(self):
+        with self.assertRaises(ValueError):
+            Order("ORD005", Side.SELL, 100, -5)
+
+
 
 if __name__ == "__main__":
     unittest.main()
