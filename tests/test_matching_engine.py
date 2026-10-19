@@ -85,3 +85,46 @@ def test_order_fully_filled():
     assert engine.order_book.best_ask() is None
     assert len(engine.trades) == 1
     assert engine.trades[0].quantity == 5
+def test_partial_fill_leaves_remaining_buy_order():
+    engine = MatchingEngine()
+
+    engine.submit_order(
+        Order("S1", Side.SELL, 100, 3)
+    )
+
+    trades = engine.submit_order(
+        Order("B1", Side.BUY, 100, 7)
+    )
+
+    assert len(trades) == 1
+    assert trades[0].quantity == 3
+
+    # Remaining BUY quantity should rest in the order book.
+    assert engine.order_book.best_bid().quantity == 4
+    assert engine.order_book.best_ask() is None
+
+
+def test_buy_matches_multiple_sell_price_levels():
+    engine = MatchingEngine()
+
+    engine.submit_order(
+        Order("S1", Side.SELL, 100, 2)
+    )
+    engine.submit_order(
+        Order("S2", Side.SELL, 105, 3)
+    )
+
+    trades = engine.submit_order(
+        Order("B1", Side.BUY, 110, 5)
+    )
+
+    assert len(trades) == 2
+    assert trades[0].sell_order_id == "S1"
+    assert trades[0].price == 100
+    assert trades[0].quantity == 2
+
+    assert trades[1].sell_order_id == "S2"
+    assert trades[1].price == 105
+    assert trades[1].quantity == 3
+
+    assert engine.order_book.best_ask() is None
