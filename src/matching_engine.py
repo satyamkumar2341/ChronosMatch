@@ -78,15 +78,4 @@ class MatchingEngine:
         return executed_trades
 
     def _remove_filled_order(self, order: Order) -> None:
-        book_side = (
-            self.order_book.asks
-            if order.side == Side.SELL
-            else self.order_book.bids
-        )
-
-        queue = book_side[order.price]
-        queue.popleft()
-
-        if not queue:
-            del book_side[order.price]
-
+        self.order_book.remove_filled_order(order)

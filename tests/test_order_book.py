@@ -54,3 +54,97 @@ class TestOrderBook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_best_prices_update_when_better_orders_arrive():
+        book = OrderBook()
+
+        book.add_order(Order("B1", Side.BUY, 100, 2))
+        book.add_order(Order("B2", Side.BUY, 105, 2))
+        book.add_order(Order("S1", Side.SELL, 120, 2))
+        book.add_order(Order("S2", Side.SELL, 110, 2))
+
+        assert book.best_bid().price == 105
+        assert book.best_ask().price == 110
+
+
+    def test_best_prices_update_when_price_level_is_removed():
+        book = OrderBook()
+
+        bid_100 = Order("B1", Side.BUY, 100, 2)
+        bid_105 = Order("B2", Side.BUY, 105, 2)
+        ask_110 = Order("S1", Side.SELL, 110, 2)
+        ask_120 = Order("S2", Side.SELL, 120, 2)
+
+        book.add_order(bid_100)
+        book.add_order(bid_105)
+        book.add_order(ask_110)
+        book.add_order(ask_120)
+
+        book.remove_filled_order(bid_105)
+        book.remove_filled_order(ask_110)
+
+        assert book.best_bid().price == 100
+        assert book.best_ask().price == 120
+
+
+    def test_best_prices_become_none_when_book_is_empty():
+        book = OrderBook()
+
+        bid = Order("B1", Side.BUY, 100, 2)
+        ask = Order("S1", Side.SELL, 110, 2)
+
+        book.add_order(bid)
+        book.add_order(ask)
+
+        book.remove_filled_order(bid)
+        book.remove_filled_order(ask)
+
+        assert book.best_bid() is None
+        assert book.best_ask() is None
+
+def test_best_prices_update_when_better_orders_arrive():
+    book = OrderBook()
+
+    book.add_order(Order("B1", Side.BUY, 100, 2))
+    book.add_order(Order("B2", Side.BUY, 105, 2))
+    book.add_order(Order("S1", Side.SELL, 120, 2))
+    book.add_order(Order("S2", Side.SELL, 110, 2))
+
+    assert book.best_bid().price == 105
+    assert book.best_ask().price == 110
+
+
+def test_best_prices_update_when_price_level_is_removed():
+    book = OrderBook()
+
+    bid_100 = Order("B1", Side.BUY, 100, 2)
+    bid_105 = Order("B2", Side.BUY, 105, 2)
+    ask_110 = Order("S1", Side.SELL, 110, 2)
+    ask_120 = Order("S2", Side.SELL, 120, 2)
+
+    book.add_order(bid_100)
+    book.add_order(bid_105)
+    book.add_order(ask_110)
+    book.add_order(ask_120)
+
+    book.remove_filled_order(bid_105)
+    book.remove_filled_order(ask_110)
+
+    assert book.best_bid().price == 100
+    assert book.best_ask().price == 120
+
+
+def test_best_prices_become_none_when_book_is_empty():
+    book = OrderBook()
+
+    bid = Order("B1", Side.BUY, 100, 2)
+    ask = Order("S1", Side.SELL, 110, 2)
+
+    book.add_order(bid)
+    book.add_order(ask)
+
+    book.remove_filled_order(bid)
+    book.remove_filled_order(ask)
+
+    assert book.best_bid() is None
+    assert book.best_ask() is None
