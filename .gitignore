@@ -2,3 +2,9 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+# Cython build artifacts
+build/
+*.pyd
+*.so
+
+src/fast_engine.c
