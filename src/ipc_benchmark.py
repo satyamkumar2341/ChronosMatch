@@ -5,8 +5,7 @@ import time
 
 from src.ring_buffer import RingBuffer
 
-
-TOTAL_ORDERS = 100_000
+TOTAL_ORDERS = 1_000_000
 CAPACITY = 4096
 BUFFER_PATH = "ipc_shared_buffer.dat"
 
