@@ -1,4 +1,5 @@
 
+
 from collections import deque
 
 from src.order import Order, Side
@@ -21,10 +22,8 @@ cdef class CythonOrderBook:
 
         if order.side == Side.BUY:
             book_side = self.bids
-
             if order.price not in book_side:
                 book_side[order.price] = deque()
-
             book_side[order.price].append(order)
 
             if (
@@ -35,10 +34,8 @@ cdef class CythonOrderBook:
 
         elif order.side == Side.SELL:
             book_side = self.asks
-
             if order.price not in book_side:
                 book_side[order.price] = deque()
-
             book_side[order.price].append(order)
 
             if (
@@ -53,13 +50,11 @@ cdef class CythonOrderBook:
     def best_bid(self):
         if self._best_bid_price is None:
             return None
-
         return self.bids[self._best_bid_price][0]
 
     def best_ask(self):
         if self._best_ask_price is None:
             return None
-
         return self.asks[self._best_ask_price][0]
 
     def remove_filled_order(self, order):
@@ -97,3 +92,96 @@ cdef class CythonOrderBook:
                 self._best_ask_price = (
                     min(self.asks) if self.asks else None
                 )
+
+
+cdef class CythonTrade:
+    cdef public object buy_order_id
+    cdef public object sell_order_id
+    cdef public int price
+    cdef public int quantity
+
+    def __init__(
+        self, buy_order_id, sell_order_id, price, quantity
+    ):
+        self.buy_order_id = buy_order_id
+        self.sell_order_id = sell_order_id
+        self.price = price
+        self.quantity = quantity
+
+    def __repr__(self):
+        return (
+            f"CythonTrade(buy_order_id={self.buy_order_id!r}, "
+            f"sell_order_id={self.sell_order_id!r}, "
+            f"price={self.price}, quantity={self.quantity})"
+        )
+
+
+cdef class CythonMatchingEngine:
+    cdef public object order_book
+    cdef public list trades
+
+    def __init__(self, order_book=None):
+        self.order_book = (
+            order_book if order_book is not None
+            else CythonOrderBook()
+        )
+        self.trades = []
+
+    def submit_order(self, order):
+        cdef list executed_trades = []
+        cdef object resting_order
+        cdef int traded_quantity
+
+        if order.side not in (Side.BUY, Side.SELL):
+            raise ValueError("Invalid order side")
+
+        while order.quantity > 0:
+            if order.side == Side.BUY:
+                resting_order = self.order_book.best_ask()
+
+                if (
+                    resting_order is None
+                    or order.price < resting_order.price
+                ):
+                    break
+            else:
+                resting_order = self.order_book.best_bid()
+
+                if (
+                    resting_order is None
+                    or order.price > resting_order.price
+                ):
+                    break
+
+            traded_quantity = min(
+                order.quantity, resting_order.quantity
+            )
+
+            if order.side == Side.BUY:
+                trade = CythonTrade(
+                    order.order_id,
+                    resting_order.order_id,
+                    resting_order.price,
+                    traded_quantity,
+                )
+            else:
+                trade = CythonTrade(
+                    resting_order.order_id,
+                    order.order_id,
+                    resting_order.price,
+                    traded_quantity,
+                )
+
+            order.quantity -= traded_quantity
+            resting_order.quantity -= traded_quantity
+
+            executed_trades.append(trade)
+            self.trades.append(trade)
+
+            if resting_order.quantity == 0:
+                self.order_book.remove_filled_order(resting_order)
+
+        if order.quantity > 0:
+            self.order_book.add_order(order)
+
+        return executed_trades
