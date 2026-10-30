@@ -1,12 +1,15 @@
 
+
 import mmap
 import multiprocessing
 import os
+import math
 import struct
 
 
 HEADER = struct.Struct("<III")
 RECORD = struct.Struct("<32s4sdI")
+MAX_QUANTITY = (1 << 32) - 1
 
 
 class RingBuffer:
@@ -28,7 +31,9 @@ class RingBuffer:
             self.file = open(path, "r+b")
             if os.path.getsize(path) != self.size:
                 self.file.close()
-                raise ValueError("Existing buffer size does not match capacity")
+                raise ValueError(
+                    "Existing buffer size does not match capacity"
+                )
 
         self.memory = mmap.mmap(self.file.fileno(), self.size)
 
@@ -36,19 +41,53 @@ class RingBuffer:
             self.memory[:self.header_size] = HEADER.pack(0, 0, 0)
             self.memory.flush()
 
-    def write(self, order_id, side, price, quantity):
-        if side not in ("BUY", "SELL"):
-            raise ValueError("Side must be BUY or SELL")
+    @staticmethod
+    def _validate_and_pack(order_id, side, price, quantity):
+        """Validate an order and convert it into the binary record format."""
 
-        encoded_id = order_id.encode("utf-8")
+        if not isinstance(order_id, str):
+            raise ValueError("Order ID must be a string")
+
+        try:
+            encoded_id = order_id.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("Order ID must be valid UTF-8") from exc
+
         if not encoded_id or len(encoded_id) > 32:
             raise ValueError("Order ID must be 1-32 UTF-8 bytes")
 
-        if price <= 0 or quantity <= 0:
-            raise ValueError("Price and quantity must be positive")
+        if side not in ("BUY", "SELL"):
+            raise ValueError("Side must be BUY or SELL")
 
-        record = RECORD.pack(
-            encoded_id, side.encode("ascii"), float(price), int(quantity)
+        if isinstance(price, bool):
+            raise ValueError("Price must be a finite positive number")
+
+        try:
+            numeric_price = float(price)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("Price must be a finite positive number") from exc
+
+        if not math.isfinite(numeric_price) or numeric_price <= 0:
+            raise ValueError("Price must be a finite positive number")
+
+        if isinstance(quantity, bool) or not isinstance(quantity, int):
+            raise ValueError("Quantity must be a positive integer")
+
+        if not 1 <= quantity <= MAX_QUANTITY:
+            raise ValueError(
+                "Quantity must fit in an unsigned 32-bit integer"
+            )
+
+        return RECORD.pack(
+            encoded_id,
+            side.encode("ascii"),
+            numeric_price,
+            quantity,
+        )
+
+    def write(self, order_id, side, price, quantity):
+        record = self._validate_and_pack(
+            order_id, side, price, quantity
         )
 
         with self.lock:
@@ -69,31 +108,13 @@ class RingBuffer:
                 read_pos, write_pos, count
             )
             return True
-    
+
     def write_many(self, orders):
-        records = []
-
-        for order_id, side, price, quantity in orders:
-            if side not in ("BUY", "SELL"):
-                raise ValueError("Side must be BUY or SELL")
-
-            encoded_id = order_id.encode("utf-8")
-            if not encoded_id or len(encoded_id) > 32:
-                raise ValueError("Order ID must be 1-32 UTF-8 bytes")
-
-            if price <= 0 or quantity <= 0:
-                raise ValueError("Price and quantity must be positive")
-
-            records.append(
-                RECORD.pack(
-                    encoded_id,
-                    side.encode("ascii"),
-                    float(price),
-                    int(quantity),
-                )
-            )
-
-        written = 0
+        # Validate every record before modifying shared memory.
+        records = [
+            self._validate_and_pack(order_id, side, price, quantity)
+            for order_id, side, price, quantity in orders
+        ]
 
         with self.lock:
             read_pos, write_pos, count = HEADER.unpack(
@@ -150,7 +171,6 @@ class RingBuffer:
 
         return orders
 
-
     def read(self):
         with self.lock:
             read_pos, write_pos, count = HEADER.unpack(
@@ -188,4 +208,3 @@ class RingBuffer:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
-

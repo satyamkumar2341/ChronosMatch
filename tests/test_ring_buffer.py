@@ -1,16 +1,17 @@
 
+
 import os
 import tempfile
 import unittest
+import math
 
-from src.ring_buffer import RingBuffer
+from src.ring_buffer import RingBuffer, MAX_QUANTITY
 
 
 class TestRingBuffer(unittest.TestCase):
     def setUp(self):
         fd, self.path = tempfile.mkstemp()
         os.close(fd)
-
         self.buffer = RingBuffer(self.path, capacity=2)
 
     def tearDown(self):
@@ -58,6 +59,71 @@ class TestRingBuffer(unittest.TestCase):
     def test_invalid_quantity(self):
         with self.assertRaises(ValueError):
             self.buffer.write("ORD001", "BUY", 100, 0)
+
+    def test_nan_price_rejected(self):
+        with self.assertRaises(ValueError):
+            self.buffer.write("ORD001", "BUY", math.nan, 5)
+
+    def test_infinite_price_rejected(self):
+        with self.assertRaises(ValueError):
+            self.buffer.write("ORD001", "BUY", math.inf, 5)
+
+    def test_negative_infinite_price_rejected(self):
+        with self.assertRaises(ValueError):
+            self.buffer.write("ORD001", "BUY", -math.inf, 5)
+
+    def test_fractional_quantity_rejected(self):
+        with self.assertRaises(ValueError):
+            self.buffer.write("ORD001", "BUY", 100, 2.5)
+
+    def test_boolean_quantity_rejected(self):
+        with self.assertRaises(ValueError):
+            self.buffer.write("ORD001", "BUY", 100, True)
+
+    def test_quantity_over_uint32_rejected(self):
+        with self.assertRaises(ValueError):
+            self.buffer.write(
+                "ORD001", "BUY", 100, MAX_QUANTITY + 1
+            )
+
+    def test_max_uint32_quantity_accepted(self):
+        self.buffer.write("ORD001", "BUY", 100, MAX_QUANTITY)
+        order = self.buffer.read()
+        self.assertEqual(order["quantity"], MAX_QUANTITY)
+
+    def test_order_id_must_be_string(self):
+        with self.assertRaises(ValueError):
+            self.buffer.write(123, "BUY", 100, 5)
+
+    def test_order_id_utf8_limit(self):
+        with self.assertRaises(ValueError):
+            self.buffer.write("अ" * 11, "BUY", 100, 5)
+
+    def test_invalid_batch_is_atomic(self):
+        orders = [
+            ("ORD001", "BUY", 100, 5),
+            ("ORD002", "SELL", 101, 3),
+            ("ORD003", "BUY", 102, 2.5),
+        ]
+
+        with self.assertRaises(ValueError):
+            self.buffer.write_many(orders)
+
+        self.assertEqual(self.buffer.read(), None)
+
+    def test_write_many_respects_capacity(self):
+        orders = [
+            ("ORD001", "BUY", 100, 5),
+            ("ORD002", "SELL", 101, 3),
+            ("ORD003", "BUY", 102, 2),
+        ]
+
+        self.assertEqual(self.buffer.write_many(orders), 2)
+
+        result = self.buffer.read_many()
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["order_id"], "ORD001")
+        self.assertEqual(result[1]["order_id"], "ORD002")
 
 
 if __name__ == "__main__":
