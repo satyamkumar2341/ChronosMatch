@@ -1,8 +1,7 @@
-
-
+from time import perf_counter_ns
 from collections import deque
 
-from src.order import Order, Side
+from src.order import Side
 
 
 cdef class CythonOrderBook:
@@ -119,69 +118,203 @@ cdef class CythonTrade:
 cdef class CythonMatchingEngine:
     cdef public object order_book
     cdef public list trades
+    cdef public bint track_latency
+    cdef public list latency_records
+    cdef public list trade_latency_records
 
-    def __init__(self, order_book=None):
+    def __init__(self, order_book=None, track_latency=False):
         self.order_book = (
             order_book if order_book is not None
             else CythonOrderBook()
         )
         self.trades = []
+        self.track_latency = track_latency
+        self.latency_records = []
+        self.trade_latency_records = []
+
 
     def submit_order(self, order):
-        cdef list executed_trades = []
-        cdef object resting_order
-        cdef int traded_quantity
+        if not self.track_latency:
+            return self._submit_order_impl(order)
 
-        if order.side not in (Side.BUY, Side.SELL):
+        entry_ns = perf_counter_ns()
+
+        try:
+            return self._submit_order_impl(order)
+        finally:
+            exit_ns = perf_counter_ns()
+            self.latency_records.append({
+                "order_id": order.order_id,
+                "entry_ns": entry_ns,
+                "exit_ns": exit_ns,
+                "duration_ns": exit_ns - entry_ns,
+            })
+
+    def _submit_order_impl(self, order):
+        cdef list executed_trades = []
+        cdef object order_book = self.order_book
+        cdef object order_side = order.side
+        cdef object order_price = order.price
+        cdef object order_id = order.order_id
+        cdef object order_quantity = order.quantity
+
+        cdef object resting_order
+        cdef object resting_price
+        cdef object resting_quantity
+        cdef object traded_quantity
+        cdef object trade
+
+        cdef object trade_entry_ns
+        cdef object trade_exit_ns
+
+        cdef object best_bid = order_book.best_bid
+        cdef object best_ask = order_book.best_ask
+        cdef object remove_filled = order_book.remove_filled_order
+        cdef object add_order = order_book.add_order
+
+        if order_side != Side.BUY and order_side != Side.SELL:
             raise ValueError("Invalid order side")
 
-        while order.quantity > 0:
-            if order.side == Side.BUY:
-                resting_order = self.order_book.best_ask()
+        while order_quantity > 0:
+            if order_side == Side.BUY:
+                resting_order = best_ask()
 
-                if (
-                    resting_order is None
-                    or order.price < resting_order.price
-                ):
+                if resting_order is None:
+                    break
+
+                resting_price = resting_order.price
+                if order_price < resting_price:
                     break
             else:
-                resting_order = self.order_book.best_bid()
+                resting_order = best_bid()
 
-                if (
-                    resting_order is None
-                    or order.price > resting_order.price
-                ):
+                if resting_order is None:
                     break
 
-            traded_quantity = min(
-                order.quantity, resting_order.quantity
-            )
+                resting_price = resting_order.price
+                if order_price > resting_price:
+                    break
 
-            if order.side == Side.BUY:
+            if self.track_latency:
+                trade_entry_ns = perf_counter_ns()
+
+            resting_quantity = resting_order.quantity
+
+            if order_quantity < resting_quantity:
+                traded_quantity = order_quantity
+            else:
+                traded_quantity = resting_quantity
+
+            if order_side == Side.BUY:
                 trade = CythonTrade(
-                    order.order_id,
+                    order_id,
                     resting_order.order_id,
-                    resting_order.price,
+                    resting_price,
                     traded_quantity,
                 )
             else:
                 trade = CythonTrade(
                     resting_order.order_id,
-                    order.order_id,
-                    resting_order.price,
+                    order_id,
+                    resting_price,
                     traded_quantity,
                 )
 
-            order.quantity -= traded_quantity
-            resting_order.quantity -= traded_quantity
+            order_quantity -= traded_quantity
+            resting_quantity -= traded_quantity
+
+            order.quantity = order_quantity
+            resting_order.quantity = resting_quantity
 
             executed_trades.append(trade)
             self.trades.append(trade)
 
-            if resting_order.quantity == 0:
-                self.order_book.remove_filled_order(resting_order)
+            if resting_quantity == 0:
+                remove_filled(resting_order)
 
-        if order.quantity > 0:
-            self.order_book.add_order(order)
+            if self.track_latency:
+                trade_exit_ns = perf_counter_ns()
+                self.trade_latency_records.append({
+                    "buy_order_id": trade.buy_order_id,
+                    "sell_order_id": trade.sell_order_id,
+                    "entry_ns": trade_entry_ns,
+                    "exit_ns": trade_exit_ns,
+                    "duration_ns": trade_exit_ns - trade_entry_ns,
+                })
+
+        if order_quantity > 0:
+            add_order(order)
 
         return executed_trades
+    
+        # Cache bound methods to avoid repeated attribute lookups.
+        cdef object best_bid = order_book.best_bid
+        cdef object best_ask = order_book.best_ask
+        cdef object remove_filled = order_book.remove_filled_order
+        cdef object add_order = order_book.add_order
+
+        if order_side != Side.BUY and order_side != Side.SELL:
+            raise ValueError("Invalid order side")
+
+        while order_quantity > 0:
+            if order_side == Side.BUY:
+                resting_order = best_ask()
+
+                if resting_order is None:
+                    break
+
+                resting_price = resting_order.price
+                if order_price < resting_price:
+                    break
+
+            else:
+                resting_order = best_bid()
+
+                if resting_order is None:
+                    break
+
+                resting_price = resting_order.price
+                if order_price > resting_price:
+                    break
+
+            resting_quantity = resting_order.quantity
+
+            # Avoid calling Python's min() in the matching loop.
+            if order_quantity < resting_quantity:
+                traded_quantity = order_quantity
+            else:
+                traded_quantity = resting_quantity
+
+            if order_side == Side.BUY:
+                trade = CythonTrade(
+                    order_id,
+                    resting_order.order_id,
+                    resting_price,
+                    traded_quantity,
+                )
+            else:
+                trade = CythonTrade(
+                    resting_order.order_id,
+                    order_id,
+                    resting_price,
+                    traded_quantity,
+                )
+
+            order_quantity -= traded_quantity
+            resting_quantity -= traded_quantity
+
+            # Preserve the original order mutation behaviour.
+            order.quantity = order_quantity
+            resting_order.quantity = resting_quantity
+
+            executed_trades.append(trade)
+            self.trades.append(trade)
+
+            if resting_quantity == 0:
+                remove_filled(resting_order)
+
+        if order_quantity > 0:
+            add_order(order)
+
+        return executed_trades
+

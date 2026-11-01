@@ -1,13 +1,23 @@
+import sys
 
 from setuptools import Extension, setup
 from Cython.Build import cythonize
+
+
+if sys.platform == "win32":
+    compile_args = ["/O2"]
+else:
+    compile_args = ["-O3"]
+
 
 extensions = [
     Extension(
         name="src.fast_engine",
         sources=["src/fast_engine.pyx"],
+        extra_compile_args=compile_args,
     )
 ]
+
 
 setup(
     name="chronosmatch",
@@ -15,6 +25,8 @@ setup(
     packages=["src"],
     ext_modules=cythonize(
         extensions,
-        compiler_directives={"language_level": 3},
+        compiler_directives={
+            "language_level": 3,
+        },
     ),
 )
