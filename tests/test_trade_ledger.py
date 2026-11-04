@@ -146,3 +146,65 @@ def test_database_failure_preserves_order_book_state(tmp_path):
     # No trade should be added to memory or database.
     assert engine.trades == []
     assert ledger.count_trades() == 0
+
+def test_rejects_invalid_price(tmp_path):
+    ledger = TradeLedger(tmp_path / "invalid.db")
+
+    for price in [0, -100, float("nan"), float("inf"), -float("inf")]:
+        with pytest.raises(ValueError):
+            ledger.record_trade(Trade("B1", "S1", price, 5))
+
+    assert ledger.count_trades() == 0
+
+
+def test_rejects_invalid_quantity(tmp_path):
+    ledger = TradeLedger(tmp_path / "invalid_quantity.db")
+
+    for quantity in [0, -1, 1.5, True]:
+        with pytest.raises(ValueError):
+            ledger.record_trade(Trade("B1", "S1", 100, quantity))
+
+    assert ledger.count_trades() == 0
+
+
+def test_rejects_empty_order_ids(tmp_path):
+    ledger = TradeLedger(tmp_path / "invalid_ids.db")
+
+    invalid_trades = [
+        Trade("", "S1", 100, 5),
+        Trade("B1", "", 100, 5),
+        Trade("   ", "S1", 100, 5),
+    ]
+
+    for trade in invalid_trades:
+        with pytest.raises(ValueError):
+            ledger.record_trade(trade)
+
+    assert ledger.count_trades() == 0
+
+
+def test_invalid_batch_is_atomic(tmp_path):
+    ledger = TradeLedger(tmp_path / "atomic.db")
+
+    trades = [
+        Trade("B1", "S1", 100, 5),
+        Trade("B2", "S2", -10, 5),
+        Trade("B3", "S3", 102, 5),
+    ]
+
+    with pytest.raises(ValueError):
+        ledger.record_trades(trades)
+
+    assert ledger.count_trades() == 0
+
+
+def test_valid_batch_is_persisted(tmp_path):
+    ledger = TradeLedger(tmp_path / "valid.db")
+
+    trades = [
+        Trade("B1", "S1", 100, 5),
+        Trade("B2", "S2", 105, 10),
+    ]
+
+    assert ledger.record_trades(trades) == 2
+    assert ledger.count_trades() == 2

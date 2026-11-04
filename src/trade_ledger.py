@@ -1,6 +1,6 @@
 
+import math
 import sqlite3
-from pathlib import Path
 
 
 class TradeLedger:
@@ -26,7 +26,31 @@ class TradeLedger:
                         (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
                 )
             """)
-            connection.commit()
+
+    @staticmethod
+    def _validate_trade(trade):
+        buy_id = trade.buy_order_id
+        sell_id = trade.sell_order_id
+        price = trade.price
+        quantity = trade.quantity
+
+        if not isinstance(buy_id, str) or not buy_id.strip():
+            raise ValueError("Invalid buy order ID")
+
+        if not isinstance(sell_id, str) or not sell_id.strip():
+            raise ValueError("Invalid sell order ID")
+
+        if isinstance(price, bool) or not isinstance(price, (int, float)):
+            raise ValueError("Price must be numeric")
+
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("Price must be finite and positive")
+
+        if isinstance(quantity, bool) or not isinstance(quantity, int):
+            raise ValueError("Quantity must be an integer")
+
+        if quantity <= 0:
+            raise ValueError("Quantity must be positive")
 
     def record_trade(self, trade):
         self.record_trades([trade])
@@ -34,7 +58,10 @@ class TradeLedger:
     def record_trades(self, trades):
         rows = []
 
+        # Validate the entire batch before database insertion.
         for trade in trades:
+            self._validate_trade(trade)
+
             rows.append((
                 trade.buy_order_id,
                 trade.sell_order_id,
@@ -72,6 +99,7 @@ class TradeLedger:
             """, (limit,))
 
             columns = [column[0] for column in cursor.description]
+
             return [
                 dict(zip(columns, row))
                 for row in cursor.fetchall()
@@ -82,3 +110,4 @@ class TradeLedger:
             return connection.execute(
                 "SELECT COUNT(*) FROM trades"
             ).fetchone()[0]
+
