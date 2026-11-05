@@ -85,18 +85,48 @@ class TradeLedger:
 
         return len(rows)
 
-    def get_trades(self, limit=100):
+    def get_trades(
+        self,
+        limit=100,
+        buy_order_id=None,
+        sell_order_id=None
+    ):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValueError("Limit must be a positive integer")
 
+        if buy_order_id is not None:
+            if not isinstance(buy_order_id, str) or not buy_order_id.strip():
+                raise ValueError("Invalid buy order ID")
+
+        if sell_order_id is not None:
+            if not isinstance(sell_order_id, str) or not sell_order_id.strip():
+                raise ValueError("Invalid sell order ID")
+
+        query = """
+            SELECT id, buy_order_id, sell_order_id,
+                   price, quantity, created_at
+            FROM trades
+        """
+
+        conditions = []
+        parameters = []
+
+        if buy_order_id is not None:
+            conditions.append("buy_order_id = ?")
+            parameters.append(buy_order_id)
+
+        if sell_order_id is not None:
+            conditions.append("sell_order_id = ?")
+            parameters.append(sell_order_id)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " ORDER BY id DESC LIMIT ?"
+        parameters.append(limit)
+
         with self._connect() as connection:
-            cursor = connection.execute("""
-                SELECT id, buy_order_id, sell_order_id,
-                       price, quantity, created_at
-                FROM trades
-                ORDER BY id DESC
-                LIMIT ?
-            """, (limit,))
+            cursor = connection.execute(query, parameters)
 
             columns = [column[0] for column in cursor.description]
 

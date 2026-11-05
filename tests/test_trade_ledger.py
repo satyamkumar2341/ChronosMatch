@@ -208,3 +208,64 @@ def test_valid_batch_is_persisted(tmp_path):
 
     assert ledger.record_trades(trades) == 2
     assert ledger.count_trades() == 2
+
+def test_filter_trades_by_buy_order_id(tmp_path):
+    ledger = TradeLedger(tmp_path / "filter_buy.db")
+    ledger.record_trades([
+        Trade("B1", "S1", 100, 5),
+        Trade("B2", "S2", 101, 10),
+        Trade("B1", "S3", 102, 3),
+    ])
+    results = ledger.get_trades(buy_order_id="B1")
+    assert len(results) == 2
+    assert all(t["buy_order_id"] == "B1" for t in results)
+
+
+def test_filter_trades_by_sell_order_id(tmp_path):
+    ledger = TradeLedger(tmp_path / "filter_sell.db")
+    ledger.record_trades([
+        Trade("B1", "S1", 100, 5),
+        Trade("B2", "S2", 101, 10),
+        Trade("B3", "S1", 102, 3),
+    ])
+    results = ledger.get_trades(sell_order_id="S1")
+    assert len(results) == 2
+    assert all(t["sell_order_id"] == "S1" for t in results)
+
+
+def test_filter_trades_by_both_order_ids(tmp_path):
+    ledger = TradeLedger(tmp_path / "filter_both.db")
+    ledger.record_trades([
+        Trade("B1", "S1", 100, 5),
+        Trade("B1", "S2", 101, 10),
+        Trade("B2", "S1", 102, 3),
+    ])
+    results = ledger.get_trades(
+        buy_order_id="B1",
+        sell_order_id="S1"
+    )
+    assert len(results) == 1
+    assert results[0]["buy_order_id"] == "B1"
+    assert results[0]["sell_order_id"] == "S1"
+
+
+def test_filtered_trades_preserve_latest_first_order(tmp_path):
+    ledger = TradeLedger(tmp_path / "filter_order.db")
+    ledger.record_trades([
+        Trade("B1", "S1", 100, 5),
+        Trade("B1", "S2", 101, 10),
+        Trade("B1", "S3", 102, 3),
+    ])
+    results = ledger.get_trades(buy_order_id="B1")
+    assert [t["sell_order_id"] for t in results] == [
+        "S3", "S2", "S1"
+    ]
+
+
+def test_rejects_invalid_order_id_filters(tmp_path):
+    ledger = TradeLedger(tmp_path / "invalid_filter.db")
+    for invalid_id in ["", "   ", 123, True]:
+        with pytest.raises(ValueError):
+            ledger.get_trades(buy_order_id=invalid_id)
+        with pytest.raises(ValueError):
+            ledger.get_trades(sell_order_id=invalid_id)
