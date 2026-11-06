@@ -93,4 +93,3 @@ async def run_matching_firehose(buffer, total_orders, engine, order_prefix='ORD'
         "average_latency_us": average_latency,
         "p99_latency_us": p99_latency,
     }
-
