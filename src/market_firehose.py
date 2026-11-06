@@ -5,10 +5,14 @@ import time
 from src.ring_buffer import RingBuffer
 
 
-async def produce_orders(buffer, total_orders, batch_size=1000):
+async def produce_orders(buffer, total_orders, batch_size=1000, order_prefix='ORD'):
     """Generate mock orders and publish them to the ring buffer."""
+    if not isinstance(order_prefix, str) or not order_prefix:
+        raise ValueError("order_prefix must be a non-empty string")
+    if len(order_prefix.encode("utf-8")) + 8 > 32:
+        raise ValueError("order_prefix is too long for order IDs")
     for i in range(total_orders):
-        order_id = f"ORD{i:08d}"
+        order_id = f"{order_prefix}{i:08d}"
         side = "BUY" if i % 2 == 0 else "SELL"
         price = 100.0 + (i % 100) * 0.5
         quantity = (i % 10) + 1

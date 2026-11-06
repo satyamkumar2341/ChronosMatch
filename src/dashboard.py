@@ -1,110 +1,92 @@
+﻿import asyncio
+import tempfile
+import uuid
+from pathlib import Path
 
-import os
-import time
-from collections import deque
-
-from src.order import Order, Side
 from src.matching_engine import MatchingEngine
+from src.ring_buffer import RingBuffer
+from src.trade_ledger import TradeLedger
+from src.trading_pipeline import run_matching_firehose
 
 
-REFRESH_SECONDS = 1
 DEMO_ORDERS = 1000
+DATABASE_PATH = "chronosmatch.db"
 
 
-def format_price(order):
-    return str(order.price) if order else "-"
+def display_dashboard(result, engine, ledger):
+    best_bid = engine.order_book.best_bid()
+    best_ask = engine.order_book.best_ask()
 
+    spread = (
+        best_ask.price - best_bid.price
+        if best_bid and best_ask else None
+    )
 
-def clear_screen():
-    os.system("cls" if os.name == "nt" else "clear")
+    recent_trades = ledger.get_trades(limit=10)
+
+    print("\n" + "=" * 65)
+    print("                 CHRONOSMATCH - TRADING DASHBOARD")
+    print("=" * 65)
+
+    print("\nMARKET OVERVIEW")
+    print("-" * 65)
+    print(f"Best Bid:                 {best_bid.price if best_bid else '-'}")
+    print(f"Best Ask:                 {best_ask.price if best_ask else '-'}")
+    print(f"Spread:                   {spread if spread is not None else '-'}")
+
+    print("\nPIPELINE PERFORMANCE")
+    print("-" * 65)
+    print(f"Orders Processed:         {result['orders_processed']:,}")
+    print(f"Trades Executed (batch):  {result['trades_executed']:,}")
+    print(f"Total Stored Trades:      {ledger.count_trades():,}")
+    print(f"Elapsed Time:             {result['elapsed_seconds']:.4f} sec")
+    print(f"Throughput:               {result['orders_per_second']:,.0f} orders/sec")
+    print(f"Average Matching Latency: {result['average_latency_us']:.2f} us")
+    print(f"P99 Matching Latency:     {result['p99_latency_us']:.2f} us")
+
+    print("\nRECENT EXECUTED TRADES")
+    print("-" * 65)
+
+    if not recent_trades:
+        print("No trades recorded.")
+    else:
+        print(
+            f"{'BUY ORDER':<15} {'SELL ORDER':<15} "
+            f"{'PRICE':>10} {'QUANTITY':>10}"
+        )
+        for trade in recent_trades:
+            print(
+                f"{trade['buy_order_id']:<15} "
+                f"{trade['sell_order_id']:<15} "
+                f"{trade['price']:>10.2f} "
+                f"{trade['quantity']:>10}"
+            )
+
+    print("\n" + "=" * 65)
+    print("Simulation mode: synthetic market orders; no live exchange connection.")
+    print(f"Trade database: {DATABASE_PATH}")
+    print("=" * 65)
 
 
 def run_dashboard():
-    engine = MatchingEngine()
-    recent_latencies = deque(maxlen=500)
-    total_orders = 0
-    total_trades = 0
-    started_at = time.perf_counter()
-    next_order_id = 1
+    ledger = TradeLedger(DATABASE_PATH)
+    engine = MatchingEngine(trade_ledger=ledger)
 
-    # Seed the book with resting orders on both sides.
-    engine.submit_order(Order(f"O{next_order_id}", Side.BUY, 99, 100))
-    next_order_id += 1
-    engine.submit_order(Order(f"O{next_order_id}", Side.SELL, 101, 100))
-    next_order_id += 1
+    print("Starting ChronosMatch pipeline...")
+    order_prefix = f"R{uuid.uuid4().hex[:8].upper()}_"
 
-    try:
-        while True:
-            cycle_start = time.perf_counter()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        buffer_path = Path(temp_dir) / "market.dat"
 
-            # Generate demo orders around the spread.
-            for i in range(DEMO_ORDERS):
-                if i % 2 == 0:
-                    side = Side.BUY
-                    price = 101
-                else:
-                    side = Side.SELL
-                    price = 99
-
-                order = Order(
-                    order_id=f"O{next_order_id}",
-                    side=side,
-                    price=price,
-                    quantity=1,
+        with RingBuffer(buffer_path, capacity=1024) as buffer:
+            result = asyncio.run(
+                run_matching_firehose(
+                    buffer, DEMO_ORDERS, engine,
+                    order_prefix=order_prefix,
                 )
-                next_order_id += 1
-
-                order_start = time.perf_counter()
-                trades = engine.submit_order(order)
-                latency_us = (time.perf_counter() - order_start) * 1_000_000
-
-                recent_latencies.append(latency_us)
-                total_orders += 1
-                total_trades += len(trades)
-
-            elapsed = time.perf_counter() - started_at
-            throughput = total_orders / elapsed if elapsed else 0
-            sorted_latencies = sorted(recent_latencies)
-
-            avg_latency = (
-                sum(recent_latencies) / len(recent_latencies)
-                if recent_latencies else 0
-            )
-            p99_index = int(0.99 * (len(sorted_latencies) - 1))
-            p99_latency = (
-                sorted_latencies[p99_index] if sorted_latencies else 0
             )
 
-            best_bid = engine.order_book.best_bid()
-            best_ask = engine.order_book.best_ask()
-            spread = (
-                best_ask.price - best_bid.price
-                if best_bid and best_ask else None
-            )
-
-            clear_screen()
-            print("=" * 60)
-            print("          CHRONOSMATCH - TRADING DASHBOARD")
-            print("=" * 60)
-            print(f"Best Bid:              {format_price(best_bid)}")
-            print(f"Best Ask:              {format_price(best_ask)}")
-            print(f"Spread:                {spread if spread is not None else '-'}")
-            print("-" * 60)
-            print(f"Orders Processed:      {total_orders:,}")
-            print(f"Trades Executed:       {total_trades:,}")
-            print(f"Throughput:            {throughput:,.0f} orders/sec")
-            print(f"Average Latency:       {avg_latency:.2f} microseconds")
-            print(f"P99 Latency:           {p99_latency:.2f} microseconds")
-            print(f"Recent Samples:        {len(recent_latencies)}")
-            print("-" * 60)
-            print("Demo mode: synthetic orders; not connected to a live exchange.")
-            print("Press Ctrl+C to exit.")
-
-            cycle_time = time.perf_counter() - cycle_start
-            time.sleep(max(0, REFRESH_SECONDS - cycle_time))
-
-    except KeyboardInterrupt:
-        print("\nDashboard stopped.")
+    display_dashboard(result, engine, ledger)
 
 
 if __name__ == "__main__":
